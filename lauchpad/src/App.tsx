@@ -13,7 +13,7 @@ import { clusterApiUrl } from '@solana/web3.js';
 
 // Default styles that can be overridden by your app
 import '@solana/wallet-adapter-react-ui/styles.css';
-import { TokenLauncpad } from './component/launchpad';
+import { TokenLaunchpad } from './component/launchpad';
 
 function App() {
  
@@ -28,7 +28,7 @@ function App() {
                     <WalletDisconnectButton />
                   </div>
                    
-                    <TokenLauncpad/>
+                    <TokenLaunchpad/>
                 </WalletModalProvider>
             </WalletProvider>
         </ConnectionProvider>

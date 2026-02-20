@@ -1,60 +1,129 @@
-import { useRef } from "react"
-import { createInitializeMint2Instruction, createMint, getMinimumBalanceForRentExemptMint, MINT_SIZE, TOKEN_PROGRAM_ID } from "@solana/spl-token"
-import { useConnection, useWallet } from "@solana/wallet-adapter-react"
-import { Keypair, SystemProgram, Transaction } from "@solana/web3.js"
+import { useRef } from "react";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  createInitializeMetadataPointerInstruction,
+  createInitializeMint2Instruction,
+  createMintToInstruction,
+  getAssociatedTokenAddressSync,
+  TOKEN_2022_PROGRAM_ID,
+  ExtensionType,
+  getMintLen,
+} from "@solana/spl-token";
 
-export function TokenLauncpad(){
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { Keypair, SystemProgram, Transaction } from "@solana/web3.js";
 
-    const nameRef=useRef<any>("")
-    const symbolRef=useRef<any>("")
-    const imageRef =useRef<any>("")
-    const supplyRef=useRef<any>("")
+export function TokenLaunchpad() {
+  const nameRef = useRef<any>("");
+  const symbolRef = useRef<any>("");
+  const imageRef = useRef<any>("");
+  const supplyRef = useRef<any>("");
 
-    const {connection}=useConnection()
-    const wallet=useWallet()
+  const { connection } = useConnection();
+  const wallet = useWallet();
 
-    async function  createMintToken() {
-        const name=nameRef.current.value;
-        const symbol=symbolRef.current.value;
-        const image=imageRef.current.value;
-        const supply=supplyRef.current.value;
+  async function createMintToken() {
+    try {
+      if (!wallet.publicKey) throw new Error("Wallet not connected");
 
-        console.log(name, symbol, image, supply);
+      const supplyInput = supplyRef.current.value;
+      const decimals = 9;
 
-         const lamports = await getMinimumBalanceForRentExemptMint(connection);
-         const keyPair=Keypair.generate();
+      const mintKeypair = Keypair.generate();
 
-         if(!wallet.publicKey) throw new Error("public key not found")
+      // ✅ Only MetadataPointer extension
+      const mintLen = getMintLen([ExtensionType.MetadataPointer]);
 
-          const transaction = new Transaction().add(
-            SystemProgram.createAccount({
-            fromPubkey: wallet.publicKey,
-            newAccountPubkey: keyPair.publicKey,
-            space: MINT_SIZE,
-            lamports,
-            programId:TOKEN_PROGRAM_ID,
+      const lamports =
+        await connection.getMinimumBalanceForRentExemption(mintLen);
+
+      const associatedToken = getAssociatedTokenAddressSync(
+        mintKeypair.publicKey,
+        wallet.publicKey,
+        false,
+        TOKEN_2022_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      );
+
+      const transaction = new Transaction().add(
+        // 1️⃣ Create Mint Account
+        SystemProgram.createAccount({
+          fromPubkey: wallet.publicKey,
+          newAccountPubkey: mintKeypair.publicKey,
+          space: mintLen,
+          lamports,
+          programId: TOKEN_2022_PROGRAM_ID,
         }),
-        createInitializeMint2Instruction(keyPair.publicKey, 9, wallet.publicKey, wallet.publicKey, TOKEN_PROGRAM_ID)
-    )
 
-        const recentBlockHash=await connection.getLatestBlockhash();
-        transaction.recentBlockhash=recentBlockHash.blockhash;
-        transaction.feePayer=wallet.publicKey;
-        
-        transaction.partialSign(keyPair);
-        let response=  wallet.sendTransaction(transaction,connection)
+        // 2️⃣ Initialize Metadata Pointer
+        createInitializeMetadataPointerInstruction(
+          mintKeypair.publicKey,
+          wallet.publicKey,
+          mintKeypair.publicKey,
+          TOKEN_2022_PROGRAM_ID
+        ),
 
-        console.log(response);
-        
-      
+        // 3️⃣ Initialize Mint
+        createInitializeMint2Instruction(
+          mintKeypair.publicKey,
+          decimals,
+          wallet.publicKey,
+          wallet.publicKey,
+          TOKEN_2022_PROGRAM_ID
+        ),
+
+        // 4️⃣ Create ATA
+        createAssociatedTokenAccountInstruction(
+          wallet.publicKey,
+          associatedToken,
+          wallet.publicKey,
+          mintKeypair.publicKey,
+          TOKEN_2022_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        ),
+
+        // 5️⃣ Mint Initial Supply
+        createMintToInstruction(
+          mintKeypair.publicKey,
+          associatedToken,
+          wallet.publicKey,
+          BigInt(supplyInput) * BigInt(10 ** decimals),
+          [],
+          TOKEN_2022_PROGRAM_ID
+        )
+      );
+
+      transaction.feePayer = wallet.publicKey;
+      transaction.recentBlockhash = (
+        await connection.getLatestBlockhash()
+      ).blockhash;
+
+      transaction.partialSign(mintKeypair);
+
+      const signature = await wallet.sendTransaction(transaction, connection);
+      await connection.confirmTransaction(signature);
+
+      console.log("✅ Token Created");
+      console.log("Mint:", mintKeypair.publicKey.toBase58());
+      console.log("ATA:", associatedToken.toBase58());
+    } catch (err) {
+      console.error("❌ Error:", err);
     }
+  }
 
-
-    return <div className="grid gap-2 m-2">
-        <input ref={nameRef}  className="px-2 py 1 border" type="text" placeholder="token name" />
-        <input ref={symbolRef} className="px-2 py 1 border" type="text" placeholder="symbol" />
-        <input ref={imageRef} className="px-2 py 1 border" type="text" placeholder="image Url"/>
-        <input ref={supplyRef} className="px-2 py 1 border" type="text" placeholder="Initial Supply"/>
-        <button onClick={createMintToken} className="px-2 py-1 bg-indigo-500 rounded-lg border text-white font-bold hover:bg-indigo-700 w-[20%]">create</button>
+  return (
+    <div className="grid gap-2 m-2">
+      <input ref={nameRef} placeholder="Token name" className="border px-2 py-1" />
+      <input ref={symbolRef} placeholder="Symbol" className="border px-2 py-1" />
+      <input ref={imageRef} placeholder="Metadata URI" className="border px-2 py-1" />
+      <input ref={supplyRef} placeholder="Initial Supply" className="border px-2 py-1" />
+      <button
+        onClick={createMintToken}
+        className="px-3 py-2 bg-indigo-600 text-white rounded"
+      >
+        Create
+      </button>
     </div>
+  );
 }
